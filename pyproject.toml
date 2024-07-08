@@ -1,0 +1,22 @@
+[project]
+name = "time-tracker"
+description = "Keep a log of activities"
+authors = [
+    {name = "Noah Everett", email = "noahe@metrized.com" }
+]
+requires-python = ">=3.8"
+dynamic = ["version",  "dependencies"]
+
+[project.scripts]
+"time-tracker" = "time_tracker:cli"
+
+[tool.setuptools.dynamic]
+version = { attr = "time_tracker.__version__"}
+dependencies = { file = ["requirements.txt"] }
+
+[tool.ruff]
+ignore = ["E731"]
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
