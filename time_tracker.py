@@ -4,7 +4,9 @@ __author__ = "Noah Everett"
 import click
 from ast import literal_eval
 from datetime import datetime, timedelta
+from os import environ
 from pathlib import Path
+from re import compile as re_compile, DOTALL
 from typing import Optional, Tuple
 
 # ANSI escape codes
@@ -181,6 +183,29 @@ def log():
             yield f"{dump_entry(entry)}\n"
 
     click.echo_via_pager(reverse_log())
+
+@cli.command()
+@click.option("--done", is_flag=True, help="show done")
+def kb(done: bool):
+    """Show Kanban"""
+    if "KANBAN" not in environ:
+        raise click.UsageError("$env:KANBAN not found")
+
+    path = Path(environ["KANBAN"])    
+    text = path.read_text()
+
+    sections = re_compile(r"#\s+([^\n]+)(.+?)(?=#|\Z)", DOTALL)
+    colors = ["cyan", "blue", "green"]
+    for c, sect in zip(colors, sections.finditer(text)):
+
+        title, body =  sect.groups()
+        pattern = re_compile(r"-\s+\[[ x]?\](.*)")
+        
+        if not done and title.lower() == "done":
+            continue
+
+        for m in pattern.finditer(body):
+            click.echo(f'{click.style(title.upper(), fg=c):<20} { m.group(1)}')
 
 
 if __name__ == "__main__":
