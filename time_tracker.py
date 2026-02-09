@@ -1,13 +1,15 @@
 __version__ = "0.1.0"
 __author__ = "Noah Everett"
 
-import click
 from ast import literal_eval
 from datetime import datetime, timedelta
 from os import environ
 from pathlib import Path
-from re import compile as re_compile, DOTALL
+from re import DOTALL
+from re import compile as re_compile
 from typing import Optional, Tuple
+
+import click
 
 # ANSI escape codes
 BLUE = "\033[94m"
@@ -184,6 +186,7 @@ def log():
 
     click.echo_via_pager(reverse_log())
 
+
 @cli.command()
 @click.option("--done", is_flag=True, help="show done")
 def kb(done: bool):
@@ -191,21 +194,20 @@ def kb(done: bool):
     if "KANBAN" not in environ:
         raise click.UsageError("$env:KANBAN not found")
 
-    path = Path(environ["KANBAN"])    
+    path = Path(environ["KANBAN"])
     text = path.read_text()
 
-    sections = re_compile(r"#\s+([^\n]+)(.+?)(?=#|\Z)", DOTALL)
+    sections = re_compile(r"#\s+([^\n]+)(.+?)(?=#\s+|\Z)", DOTALL)
     colors = ["cyan", "blue", "green"]
     for c, sect in zip(colors, sections.finditer(text)):
-
-        title, body =  sect.groups()
+        title, body = sect.groups()
         pattern = re_compile(r"-\s+\[[ x]?\](.*)")
-        
+
         if not done and title.lower() == "done":
             continue
 
         for m in pattern.finditer(body):
-            click.echo(f'{click.style(title.upper(), fg=c):<20} { m.group(1)}')
+            click.echo(f"{click.style(title.upper(), fg=c):<20} {m.group(1)}")
 
 
 if __name__ == "__main__":
