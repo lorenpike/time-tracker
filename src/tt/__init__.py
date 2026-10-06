@@ -115,7 +115,7 @@ class Record:
         return start, datetime.now() - start
 
     def write(self, start: datetime, delta: timedelta, desc: str):
-        pid = classify(desc, load_projects())
+        pid = classify(desc, projects)
         text = dump_entry(Entry(start, max(delta, MIN_TIME), desc, pid))
         with open(self.root / self.log, "a") as f:
             f.write(text + "\n")
@@ -151,13 +151,15 @@ def load_projects() -> list[Project]:
 
 def lookup(pid: str) -> Project | None:
     """Lookup a project by ID"""
-    for project in load_projects():
+    for project in projects:
         if project.id == pid:
             return project
     return None
 
 
 record = Record.cannonical()
+projects = load_projects()
+off = max((len(project.name) for project in projects), default=0)
 
 
 def classify(desc: str, projects: list[Project]) -> str | None:
@@ -273,33 +275,37 @@ def show(date: str | None):
     if not records:
         click.echo(f"{RED}No entries found for date: {date}")
     for start, delta, desc, pid in records:
-        project = p.name if (p := lookup(pid)) else "Unknown"
+        project = next((p.name for p in projects if p.id == pid), "Unknown")
         click.echo(
-            f"{BLUE}{start:%I:%M%p}\t{GREEN}{delta}{YELLOW}\t{project:<10}\t{GRAY}{desc}{END}"
+            f"{BLUE}{start:%I:%M%p} {GREEN}{delta}{YELLOW} {project:<{off}} {GRAY}{desc}{END}"
         )
 
 
 @cli.command()
 @click.option("--json", "json_", is_flag=True, help="Output JSON")
-def log(json_: bool):
+@click.option("--reverse", is_flag=True, help="Show recent first")
+def log(json_: bool, reverse: bool):
     """Show all entries"""
 
     curr = None
-    for entry in reversed(record.load()):
+
+    for entry in (lambda x: reversed(x) if reverse else x)(record.load()):
         date, *_ = entry
         if curr is None:
             curr = date.date()
 
-        if curr != date.date():
+        if curr != date.date() and not json_:
             curr = date.date()
             click.echo()
+
         if json_:
+            click.echo_via_pager
             click.echo(f"{dump_entry(entry)}")
         else:
             start, delta, desc, pid = entry
-            project = p.name if (p := lookup(pid)) else "Unknown"
+            project = next((p.name for p in projects if p.id == pid), "Unknown")
             click.echo(
-                f"{BLUE}{start:%Y-%m-%d %I:%M%p} {GREEN}{delta}{YELLOW} {project:<10}\t{GRAY}{desc}{END}"
+                f"{BLUE}{start:%Y-%m-%d %I:%M%p} {GREEN}{delta}{YELLOW} {project:<{off}}\t{GRAY}{desc}{END}"
             )
 
 
@@ -307,13 +313,13 @@ def log(json_: bool):
 def check():
     """Validate config"""
 
-    projects = load_projects()
     click.echo(f"Data dir: {BLUE}{record.root}{END}")
     click.echo(f"Log file: {BLUE}{record.root / record.log}{END}")
     assert len(set(p.id for p in projects)) == len(projects), (
         "Duplicate project IDs found"
     )
     assert all(p.id for p in projects), "Project IDs cannot be empty"
+    click.echo(f"Number of projects: {BLUE}{len(projects)}{END}")
 
 
 if __name__ == "__main__":
