@@ -2,6 +2,7 @@ __version__ = "0.2.0"
 __author__ = "Noah Everett"
 
 import json
+import re
 import tomllib
 from datetime import datetime, timedelta
 from os import environ
@@ -14,6 +15,9 @@ import requests
 
 # ANSI escape codes
 BLUE = "\033[94m"
+DARK_BLUE = "\033[34m"
+LIGHT_BLUE = "\033[38;5;68m"
+LIGHT_GREEN = "\033[38;5;158m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -65,6 +69,13 @@ class Project(NamedTuple):
     desc: str
     clockify_id: str | None
     github_url: str | None
+
+
+class Note(NamedTuple):
+    start: datetime
+    pid: str | None
+    status: str | None
+    text: str
 
 
 def user_data_path() -> Path:
@@ -149,6 +160,64 @@ def load_projects() -> list[Project]:
     ]
 
 
+NOTE_HEADER = re.compile(
+    r"^\[(?P<start>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[AP]M), "
+    r"(?P<pid>[^,\]]+)(?:, status: (?P<status>done|archive|undone))?\]$"
+)
+NOTE_DATE_FORMAT = "%Y-%m-%d %I:%M:%S%p"
+
+
+def notes_path() -> Path:
+    return user_data_path() / "notes.md"
+
+
+def load_notes() -> list[Note]:
+    path = notes_path()
+    if not path.exists():
+        return []
+
+    notes: list[Note] = []
+    current: tuple[datetime, str | None, str | None] | None = None
+    body: list[str] = []
+
+    def save_current() -> None:
+        if current is None:
+            return
+        start, pid, status = current
+        notes.append(Note(start, pid, status, "\n".join(body).strip("\n")))
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = NOTE_HEADER.fullmatch(line.strip())
+        if match:
+            save_current()
+            start = datetime.strptime(match.group("start"), NOTE_DATE_FORMAT)
+            pid = match.group("pid")
+            current = (start, None if pid == "None" else pid, match.group("status"))
+            body = []
+        elif current is not None:
+            body.append(line)
+        elif line.strip():
+            raise ValueError(f"Unexpected content before first note header in {path}")
+
+    save_current()
+    return notes
+
+
+def append_note(text: str, pid: str | None, status: str | None) -> None:
+    path = notes_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime(NOTE_DATE_FORMAT)
+    header = f"[{timestamp}, {pid or 'None'}"
+    if status is not None:
+        header += f", status: {status}"
+    header += "]"
+
+    with path.open("a", encoding="utf-8", newline="\n") as file:
+        if path.stat().st_size:
+            file.write("\n")
+        file.write(f"{header}\n{text.strip()}\n")
+
+
 def lookup(pid: str) -> Project | None:
     """Lookup a project by ID"""
     for project in projects:
@@ -196,6 +265,50 @@ def classify(desc: str, projects: list[Project]) -> str | None:
         return project_id if project_id in choices and project_id != "none" else None
     except Exception:  # Best effort
         return None
+
+
+def classify_note(text: str) -> tuple[str | None, str]:
+    """Best-effort project and note/todo classification."""
+    try:
+        project_choices = {
+            project.id: f"{project.name}: {project.desc}" for project in projects
+        }
+        project_choices["none"] = "No listed project is a good match"
+        response = requests.post(
+            "https://api.typesafe.ai/v1/systemone",
+            headers={"Authorization": f"Bearer {environ['JEV_API_KEY']}"},
+            json={
+                "model": "jev-latest",
+                "state": {"text": text},
+                "questions": {
+                    "project": {
+                        "type": "choice",
+                        "instructions": "Choose the project this note or todo relates to, or none.",
+                        "criteria": project_choices,
+                    },
+                    "kind": {
+                        "type": "choice",
+                        "instructions": "Classify this as a note or an actionable todo.",
+                        "criteria": {
+                            "note": "A thought, observation, or information to remember",
+                            "todo": "An action that needs to be completed",
+                        },
+                    },
+                },
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        answers = response.json()["answers"]
+        pid = answers["project"]["choice"]
+        kind = answers["kind"]["choice"]
+        if pid not in project_choices:
+            pid = "none"
+        if kind not in ("note", "todo"):
+            kind = "note"
+        return (None if pid == "none" else pid), kind
+    except Exception:  # Best effort
+        return None, "note"
 
 
 @click.group()
@@ -267,18 +380,104 @@ def switch(desc: str | None):
 
 @cli.command()
 @click.option("--date", "-d", default=None, help="Date to show")
-def show(date: str | None):
-    """Show entries for a given date"""
+@click.option("--todo", "todo_only", is_flag=True, help="Show active todos")
+@click.option(
+    "--edit",
+    "-e",
+    "edit_file",
+    type=click.Choice(["projects", "notes", "log"]),
+    help="Open a data file in the configured editor.",
+)
+def show(date: str | None, edit_file: str | None, todo_only: bool):
+    """Show entries and notes, active todos, or edit a data file."""
+    if edit_file is not None:
+        paths = {
+            "projects": user_data_path() / "projects.toml",
+            "notes": notes_path(),
+            "log": record.root / record.log,
+        }
+        path = paths[edit_file]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+        click.edit(filename=str(path))
+        return
+
     date_time = datetime.now() if date is None else datetime.strptime(date, "%Y-%m-%d")
-    on_date = lambda entry: entry[0].date() == date_time.date()
-    records = [entry for entry in record.load() if on_date(entry)]
-    if not records:
-        click.echo(f"{RED}No entries found for date: {date}")
-    for start, delta, desc, pid in records:
-        project = next((p.name for p in projects if p.id == pid), "Unknown")
-        click.echo(
-            f"{BLUE}{start:%I:%M%p} {GREEN}{delta}{YELLOW} {project:<{off}} {GRAY}{desc}{END}"
+    if todo_only:
+        records = []
+        notes = [note for note in load_notes() if note.status == "undone"]
+    else:
+        records = [
+            entry for entry in record.load() if entry.start.date() == date_time.date()
+        ]
+        notes = [note for note in load_notes() if note.start.date() == date_time.date()]
+    if not records and not notes:
+        message = (
+            "No active todos found."
+            if todo_only
+            else f"No entries or notes found for date: {date_time:%Y-%m-%d}"
         )
+        click.echo(f"{RED}{message}{END}")
+        return
+
+    events = [(entry.start, "entry", entry) for entry in records]
+    events.extend((note.start, "note", note) for note in notes)
+    events.sort(key=lambda event: event[0])
+    project_width = max(off, len("Unknown"))
+    duration_width = max(
+        [len(str(entry.delta)) for entry in records] + [len("Note"), len("Todo"), 8]
+    )
+    time_format = "%Y-%m-%d %I:%M%p" if todo_only else "%I:%M%p"
+    time_width = len(datetime.now().strftime(time_format))
+    for start, event_type, item in events:
+        time_text = start.strftime(time_format)
+        project = next((p.name for p in projects if p.id == item.pid), "Unknown")
+        if event_type == "entry":
+            marker = str(item.delta)
+            text_lines = item.desc.splitlines() or [""]
+        else:
+            marker = "Note" if item.status is None else "Todo"
+            marker_color = {
+                None: GRAY,
+                "undone": GRAY,
+                "done": GREEN,
+                "archive": DARK_BLUE,
+            }.get(item.status, GRAY)
+            text_lines = item.text.splitlines() or [""]
+            text_color = LIGHT_BLUE if item.status is None else LIGHT_GREEN
+
+        if event_type == "entry":
+            prefix = f"{time_text:<{time_width}} {str(item.delta):>{duration_width}} {project:<{project_width}}  "
+            click.echo(
+                f"{BLUE}{time_text:<{time_width}} {GREEN}{str(item.delta):>{duration_width}}{YELLOW} "
+                f"{project:<{project_width}}  {GRAY}{text_lines[0]}{END}"
+            )
+        else:
+            prefix = f"{time_text:<{time_width}} {marker:^{duration_width}} {project:<{project_width}}  "
+            click.echo(
+                f"{BLUE}{time_text:<{time_width}} {marker_color}{marker:^{duration_width}}{YELLOW} "
+                f"{project:<{project_width}}  {text_color}{text_lines[0]}{END}"
+            )
+        for line in text_lines[1:]:
+            click.echo(f"{' ' * len(prefix)}{text_color}{line}{END}")
+
+
+@cli.command()
+@click.argument("text", required=False)
+def add(text: str | None):
+    """Add a timestamped note or todo."""
+    if text is None:
+        text = click.edit()
+    if text is None or not text.strip():
+        click.echo(f"{RED}No note text provided.{END}")
+        return
+
+    text = text.strip()
+    pid, kind = classify_note(text)
+    status = "undone" if kind == "todo" else None
+    append_note(text, pid, status)
+    project = next((p.name for p in projects if p.id == pid), "Unknown")
+    click.echo(f"{GRAY}Added {kind} for {project}.{END}")
 
 
 @cli.command()
@@ -299,7 +498,6 @@ def log(json_: bool, reverse: bool):
             click.echo()
 
         if json_:
-            click.echo_via_pager
             click.echo(f"{dump_entry(entry)}")
         else:
             start, delta, desc, pid = entry
