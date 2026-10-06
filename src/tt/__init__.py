@@ -380,6 +380,12 @@ def switch(desc: str | None):
 
 @cli.command()
 @click.option("--date", "-d", default=None, help="Date to show")
+@click.option(
+    "--yesterday",
+    "-y",
+    count=True,
+    help="Show entries N days ago (repeat -y; e.g. -yyyy is 4 days ago)",
+)
 @click.option("--todo", "todo_only", is_flag=True, help="Show active todos")
 @click.option(
     "--edit",
@@ -388,7 +394,9 @@ def switch(desc: str | None):
     type=click.Choice(["projects", "notes", "log"]),
     help="Open a data file in the configured editor.",
 )
-def show(date: str | None, edit_file: str | None, todo_only: bool):
+def show(
+    date: str | None, yesterday: int, edit_file: str | None, todo_only: bool
+):
     """Show entries and notes, active todos, or edit a data file."""
     if edit_file is not None:
         paths = {
@@ -402,7 +410,11 @@ def show(date: str | None, edit_file: str | None, todo_only: bool):
         click.edit(filename=str(path))
         return
 
-    date_time = datetime.now() if date is None else datetime.strptime(date, "%Y-%m-%d")
+    date_time = (
+        datetime.now() - timedelta(days=yesterday)
+        if yesterday
+        else datetime.now() if date is None else datetime.strptime(date, "%Y-%m-%d")
+    )
     if todo_only:
         records = []
         notes = [note for note in load_notes() if note.status == "undone"]
