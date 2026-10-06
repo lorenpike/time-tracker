@@ -371,7 +371,7 @@ def main(project, from_, to, period, output, list_projects):
 
     total_hours = df.sum().sum()
     click.echo(f"Total hours: {total_hours:.1f}")
-    click.echo(f"\nHours by team member:")
+    click.echo("\nHours by team member:")
     for user in df.columns:
         user_hours = df[user].sum()
         click.echo(f"  {user}: {user_hours:.1f}h")

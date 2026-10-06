@@ -1,20 +1,21 @@
 [project]
-name = "time-tracker"
+name = "tt"
 description = "Keep a log of activities"
-authors = [
-    {name = "Noah Everett", email = "noahe@metrized.com" }
-]
-requires-python = ">=3.8"
-dynamic = ["version",  "dependencies"]
+authors = [{name = "Noah Everett", email = "noahe@metrized.com" }]
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = ["click", "requests"]
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest",  "black", "mypy"]
 
 [project.scripts]
-"time-tracker" = "time_tracker:cli"
+"tt" = "tt:cli"
 
 [tool.setuptools.dynamic]
-version = { attr = "time_tracker.__version__"}
-dependencies = { file = ["requirements.txt"] }
+version = { attr = "tt.__version__" }
 
-[tool.ruff]
+[tool.ruff.lint]
 ignore = ["E731"]
 
 [build-system]

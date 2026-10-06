@@ -15,7 +15,7 @@ from os import environ
 import click
 from tqdm import tqdm
 
-from time_tracker import record
+from tt import record
 
 
 @dataclass
@@ -60,6 +60,12 @@ delete = partial(request, method="DELETE")
 patch = partial(request, method="PATCH")
 head = partial(request, method="HEAD")
 
+
+def sanitise_description(description: str) -> str:
+    """Replace characters that Clockify rejects in descriptions."""
+    return description.translate(str.maketrans({"<": "[", ">": "]"}))
+
+
 last_month = datetime.now() - timedelta(days=30)
 
 api_key = environ["CLOCKIFY_API_KEY"]
@@ -86,7 +92,7 @@ def main(from_: datetime, dry_run: bool):
             "customattributes": [],
             "type": "REGULAR",
             "tagIds": [],
-            "description": r[2],
+            "description": sanitise_description(r[2]),
             "start": r[0].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end": (r[0] + r[1])
             .astimezone(timezone.utc)
