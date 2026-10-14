@@ -15,7 +15,7 @@ from os import environ
 import click
 from tqdm import tqdm
 
-from tt import record
+from tt import projects, record
 
 
 @dataclass
@@ -67,6 +67,7 @@ def sanitise_description(description: str) -> str:
 
 
 last_month = datetime.now() - timedelta(days=30)
+clockify_project_ids = {p.id: p.clockify_id for p in projects}
 
 api_key = environ["CLOCKIFY_API_KEY"]
 workspaceId = environ["CLOCKIFY_WORKSPACE_ID"]
@@ -84,30 +85,52 @@ workspaceId = environ["CLOCKIFY_WORKSPACE_ID"]
 @click.option("--dry-run", is_flag=True, help="Dry run")
 def main(from_: datetime, dry_run: bool):
     """Sync log with clockify"""
-    before = lambda entry: entry[0].date() > from_.date()
-    records = [entry for entry in record.load() if before(entry)]
+    print(f"Syncing {record.root}")
+    records = [r for r in record.load() if r.start.date() >= from_.date()]
+    archived = get(
+        f"https://api.clockify.me/api/v1/workspaces/{workspaceId}/projects?archived=true&page-size=500",
+        headers={"X-Api-Key": api_key},
+    )
+    assert archived.status_code == 200, archived.content
+    archived_ids = {p["id"] for p in archived.json()}
+
+    unmapped = uploaded = failed = 0
     for r in tqdm(records):
+        project_id = clockify_project_ids.get(r.pid)
+        if project_id in archived_ids:
+            project_id = None  # Clockify rejects entries on archived projects
+        if r.pid is not None and project_id is None:
+            unmapped += 1
+
         data = {
             "billable": True,
             "customattributes": [],
             "type": "REGULAR",
             "tagIds": [],
-            "description": sanitise_description(r[2]),
-            "start": r[0].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end": (r[0] + r[1])
+            "description": sanitise_description(r.desc),
+            "start": r.start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": (r.start + r.delta)
             .astimezone(timezone.utc)
             .strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "projectId": None,
+            "projectId": project_id,
             "taskId": None,
         }
 
         url = f"https://api.clockify.me/api/v1/workspaces/{workspaceId}/time-entries"
         if dry_run:
             print(f"DRY RUN: POST {url} with \n{_json.dumps(data, indent=4)}")
-            break
+            continue
 
         response = post(url, json=data, headers={"X-Api-Key": api_key})
-        assert response.status_code == 201, response.content
+        if response.status_code != 201:
+            failed += 1
+            print(f"FAILED ({response.status_code}) {r.start} {r.desc!r}: {response.content.decode(errors='replace')}")
+            continue
+        uploaded += 1
+
+    if unmapped:
+        print(f"{unmapped} entries uploaded without a project: no clockify_id or archived in Clockify")
+    print(f"Uploaded {uploaded}, failed {failed}")
 
 
 if __name__ == "__main__":

@@ -121,7 +121,7 @@ class Record:
             return None, timedelta()
 
         with open(path, "r") as f:
-            start = datetime.strptime(f.read(), DATE_FORMAT)
+            start = datetime.strptime(f.read().strip(), DATE_FORMAT)
 
         return start, datetime.now() - start
 
@@ -394,9 +394,7 @@ def switch(desc: str | None):
     type=click.Choice(["projects", "notes", "log"]),
     help="Open a data file in the configured editor.",
 )
-def show(
-    date: str | None, yesterday: int, edit_file: str | None, todo_only: bool
-):
+def show(date: str | None, yesterday: int, edit_file: str | None, todo_only: bool):
     """Show entries and notes, active todos, or edit a data file."""
     if edit_file is not None:
         paths = {
@@ -413,7 +411,9 @@ def show(
     date_time = (
         datetime.now() - timedelta(days=yesterday)
         if yesterday
-        else datetime.now() if date is None else datetime.strptime(date, "%Y-%m-%d")
+        else datetime.now()
+        if date is None
+        else datetime.strptime(date, "%Y-%m-%d")
     )
     if todo_only:
         records = []
@@ -522,7 +522,7 @@ def log(json_: bool, reverse: bool):
 @cli.command()
 def check():
     """Validate config"""
-
+    click.echo(f"Time: {BLUE}{datetime.now():%Y-%m-%d %I:%M%p}{END}")
     click.echo(f"Data dir: {BLUE}{record.root}{END}")
     click.echo(f"Log file: {BLUE}{record.root / record.log}{END}")
     assert len(set(p.id for p in projects)) == len(projects), (
