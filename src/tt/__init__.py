@@ -33,6 +33,7 @@ class Entry(NamedTuple):
     delta: timedelta
     desc: str
     pid: str | None  # project id
+    synced: bool = False
 
 
 def parse_td(td: str) -> timedelta:
@@ -53,14 +54,16 @@ def parse_entry(line: str) -> Entry:
     delta = parse_td(data["delta"])
     desc = data["desc"]
     pid = data["pid"]
-    return Entry(start, delta, desc, pid)
+    return Entry(start, delta, desc, pid, data.get("synced", False))
 
 
 def dump_entry(entry: Entry) -> str:
-    start, delta, desc, pid = entry
+    start, delta, desc, pid, synced = entry
     start = start.strftime(DATE_FORMAT)
     delta = dump_td(delta)
-    return json.dumps({"start": start, "delta": delta, "desc": desc, "pid": pid})
+    return json.dumps(
+        {"start": start, "delta": delta, "desc": desc, "pid": pid, "synced": synced}
+    )
 
 
 class Project(NamedTuple):
@@ -512,7 +515,7 @@ def log(json_: bool, reverse: bool):
         if json_:
             click.echo(f"{dump_entry(entry)}")
         else:
-            start, delta, desc, pid = entry
+            start, delta, desc, pid, _ = entry
             project = next((p.name for p in projects if p.id == pid), "Unknown")
             click.echo(
                 f"{BLUE}{start:%Y-%m-%d %I:%M%p} {GREEN}{delta}{YELLOW} {project:<{off}}\t{GRAY}{desc}{END}"
@@ -530,6 +533,15 @@ def check():
     )
     assert all(p.id for p in projects), "Project IDs cannot be empty"
     click.echo(f"Number of projects: {BLUE}{len(projects)}{END}")
+
+
+@cli.command()
+@click.option("--dry-run", is_flag=True, help="Preview uploads without changing sync flags.")
+def sync(dry_run: bool):
+    """Upload unsynced entries to Clockify."""
+    from tt.clockify import sync as sync_command
+
+    sync_command(dry_run)
 
 
 if __name__ == "__main__":
