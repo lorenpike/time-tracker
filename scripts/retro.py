@@ -70,7 +70,8 @@ def main(workers: int) -> None:
     click.echo(f"Backup created: {backup_path}")
 
     try:
-        lines = log_path.read_text(encoding="utf-8").splitlines()
+        original = log_path.read_bytes()
+        lines = original.decode("utf-8").splitlines()
         entries = [json.loads(line) for line in lines]
         projects = load_projects()
         pending = [i for i, entry in enumerate(entries) if not entry.get("pid")]
@@ -94,8 +95,15 @@ def main(workers: int) -> None:
         entries[index]["pid"] = project_id
         assigned += project_id is not None
 
+    # Classification must not reset flags for entries already uploaded.
+    for entry in entries:
+        entry.setdefault("synced", False)
     updated_lines = [json.dumps(entry) for entry in entries]
     try:
+        if log_path.read_bytes() != original:
+            raise click.ClickException(
+                "Log changed during classification; no changes written. Run retro again."
+            )
         write_log_atomically(log_path, updated_lines)
     except OSError as error:
         raise click.ClickException(

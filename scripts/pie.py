@@ -6,8 +6,7 @@ Inner ring: Total hours per project
 Outer ring: Hours per person within each project
 
 Usage:
-    export CLOCKIFY_API_KEY="your_api_key"
-    export CLOCKIFY_WORKSPACE_ID="your_workspace_id"
+    # Uses the same saved credentials and prompts as tt sync.
     python scripts/pie.py --from 2024-01-01
     python scripts/pie.py --from 2024-01-01 --to 2024-12-31 -o chart.png
 """
@@ -16,31 +15,26 @@ from __future__ import annotations
 
 import warnings
 from datetime import datetime, timezone
-from os import environ
-from sys import path
 
 import click
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import MatplotlibDeprecationWarning
+from requests import get
+
+from tt.clockify import resolve_api_key, resolve_workspace_id
 
 # Suppress matplotlib deprecation warnings
 warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
-path.append("scripts")
-from clockify import get
-
-api_key = environ["CLOCKIFY_API_KEY"]
-workspace_id = environ["CLOCKIFY_WORKSPACE_ID"]
-
-
 def get_headers() -> dict:
     """Return headers for Clockify API requests."""
-    return {"X-Api-Key": api_key, "Content-Type": "application/json"}
+    return {"X-Api-Key": resolve_api_key(), "Content-Type": "application/json"}
 
 
 def fetch_projects() -> list[dict]:
     """Fetch all projects from the workspace with pagination."""
+    workspace_id = resolve_workspace_id()
     base_url = f"https://api.clockify.me/api/v1/workspaces/{workspace_id}/projects"
     all_projects = []
     page = 1
@@ -48,7 +42,7 @@ def fetch_projects() -> list[dict]:
 
     while True:
         url = f"{base_url}?page={page}&page-size={page_size}"
-        response = get(url, headers=get_headers())
+        response = get(url, headers=get_headers(), timeout=30)
         if response.status_code != 200:
             raise RuntimeError(f"Failed to fetch projects: {response.content}")
 
@@ -64,6 +58,7 @@ def fetch_projects() -> list[dict]:
 
 def fetch_users() -> list[dict]:
     """Fetch all users in the workspace with pagination."""
+    workspace_id = resolve_workspace_id()
     base_url = f"https://api.clockify.me/api/v1/workspaces/{workspace_id}/users"
     all_users = []
     page = 1
@@ -71,7 +66,7 @@ def fetch_users() -> list[dict]:
 
     while True:
         url = f"{base_url}?page={page}&page-size={page_size}"
-        response = get(url, headers=get_headers())
+        response = get(url, headers=get_headers(), timeout=30)
         if response.status_code != 200:
             raise RuntimeError(f"Failed to fetch users: {response.content}")
 
@@ -118,6 +113,7 @@ def fetch_user_time_entries_all(
     end_date: datetime,
 ) -> list[dict]:
     """Fetch all time entries for a single user (no project filter)."""
+    workspace_id = resolve_workspace_id()
     base_url = f"https://api.clockify.me/api/v1/workspaces/{workspace_id}/user/{user_id}/time-entries"
     all_entries = []
     page = 1
@@ -128,7 +124,7 @@ def fetch_user_time_entries_all(
 
     while True:
         url = f"{base_url}?start={start_str}&end={end_str}&page={page}&page-size={page_size}"
-        response = get(url, headers=get_headers())
+        response = get(url, headers=get_headers(), timeout=30)
 
         if response.status_code != 200:
             raise RuntimeError(f"Failed to fetch time entries: {response.content}")
